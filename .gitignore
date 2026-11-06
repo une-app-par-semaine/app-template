@@ -1,0 +1,32 @@
+# Secrets : ne jamais versionner
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.keystore
+*.jks
+
+# Builds et dépendances
+dist/
+build/
+out/
+node_modules/
+.venv/
+venv/
+__pycache__/
+*.pyc
+target/
+
+# Modèles volumineux : publiés en release, pas dans Git
+models/*.gguf
+models/*.onnx
+models/*.safetensors
+
+# Système et éditeurs
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.log

@@ -1,0 +1,44 @@
+# Publication d'une version : build sur GitHub (jamais sur une machine perso),
+# empreintes SHA-256 et attestation de provenance, puis release.
+# Déclenché par un tag vX.Y.Z poussé après la checklist de release.
+name: Release
+
+on:
+  push:
+    tags: ["v*.*.*"]
+
+permissions:
+  contents: write      # créer la release
+  id-token: write      # attestation de provenance
+  attestations: write
+
+jobs:
+  release:
+    runs-on: ubuntu-24.04
+    # Desktop multi-OS : passer à une matrice (ubuntu-24.04, windows-2025, macos-15),
+    # téléverser chaque build en artefact, puis publier dans un job final.
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # Ajouter ici la mise en place de la stack (setup-node, setup-python…).
+
+      - name: Tests
+        run: ./scripts/test.sh
+
+      - name: Build
+        run: ./scripts/build.sh
+
+      - name: Empreintes SHA-256
+        run: |
+          cd dist
+          sha256sum -- * > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
+      - name: Attestation de provenance
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: "dist/*"
+
+      - name: Publier la release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" dist/* --title "$GITHUB_REF_NAME" --generate-notes --verify-tag

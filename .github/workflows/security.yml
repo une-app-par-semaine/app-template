@@ -1,0 +1,86 @@
+# Contrôles de sécurité automatiques : secrets, analyse statique, dépendances.
+# CodeQL n'est pas ici : il est activé en « default setup » dans les réglages de l'organisation.
+name: Sécurité
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: "17 6 * * 1" # chaque lundi, pour les nouvelles failles de dépendances
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  secrets:
+    name: Secrets (gitleaks)
+    runs-on: ubuntu-24.04
+    env:
+      GITLEAKS_VERSION: "8.21.2"
+      GITLEAKS_SHA256: "5bc41815076e6ed6ef8fbecc9d9b75bcae31f39029ceb55da08086315316e3ba"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0 # tout l'historique : un secret supprimé reste dans Git
+      - name: Installer gitleaks (version et empreinte vérifiées)
+        run: |
+          f="gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          curl -sSfL -o "$f" "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/$f"
+          echo "${GITLEAKS_SHA256}  $f" | sha256sum -c -
+          tar xzf "$f" gitleaks
+      - name: Chercher des secrets dans tout l'historique
+        run: ./gitleaks detect --source . --redact --verbose
+
+  sast:
+    name: Analyse statique (Semgrep)
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      security-events: write # publier les résultats dans l'onglet Security
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+      - name: Installer Semgrep (version figée)
+        run: pip install "semgrep==1.184.0"
+      - name: Semgrep — règles par défaut et OWASP Top 10
+        run: >-
+          semgrep scan
+          --config p/default --config p/owasp-top-ten
+          --metrics=off --error
+          --text --sarif-output=semgrep.sarif
+      - name: Publier les résultats dans l'onglet Security
+        # Sur une pull request, le jeton est en lecture seule : les résultats restent dans le journal.
+        if: always() && github.event_name != 'pull_request' && hashFiles('semgrep.sarif') != ''
+        uses: github/codeql-action/upload-sarif@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
+        with:
+          sarif_file: semgrep.sarif
+          category: semgrep
+
+  dependances:
+    name: Dépendances vulnérables
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Node — npm audit
+        if: hashFiles('package-lock.json') != ''
+        run: npm audit --audit-level=high
+
+      - name: Python — installer pip-audit
+        if: hashFiles('requirements.txt') != ''
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+      - name: Python — pip-audit
+        if: hashFiles('requirements.txt') != ''
+        run: |
+          pip install pip-audit
+          pip-audit -r requirements.txt
+
+      - name: Aucun gestionnaire reconnu
+        if: hashFiles('package-lock.json') == '' && hashFiles('requirements.txt') == ''
+        run: echo "Ni package-lock.json ni requirements.txt — ajouter l'audit adapté à la stack (cargo audit, etc.)."
